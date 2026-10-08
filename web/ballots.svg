@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="336" viewBox="0 0 420 336" fill="none">
+  <g transform="rotate(-13 155 150)">
+    <rect x="38" y="60" width="172" height="213" rx="8" fill="#D5E8DC" stroke="#315844" stroke-width="2"/>
+    <path d="M57 90h132M57 96h132" stroke="#315844" stroke-width="2"/>
+    <text x="58" y="83" fill="#315844" font-family="sans-serif" font-size="12" font-weight="700">THE PEOPLE'S PICK</text>
+    <rect x="60" y="127" width="23" height="23" rx="3" stroke="#315844" stroke-width="2"/>
+    <path d="m65 138 6 6 12-17" stroke="#315844" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="60" y="168" width="23" height="23" rx="3" stroke="#315844" stroke-width="2"/>
+    <rect x="60" y="209" width="23" height="23" rx="3" stroke="#315844" stroke-width="2"/>
+    <path d="M96 137h90M96 177h71M96 218h82" stroke="#789A85" stroke-width="7"/>
+  </g>
+  <g transform="rotate(10 280 170)">
+    <rect x="187" y="92" width="176" height="211" rx="8" fill="#315BED" stroke="#243D9B" stroke-width="2"/>
+    <text x="207" y="124" fill="white" font-family="sans-serif" font-size="12" font-weight="700">THE ROOM HAS SPOKEN.</text>
+    <path d="M207 138h136" stroke="#7594FF" stroke-width="2"/>
+    <rect x="210" y="203" width="30" height="71" rx="3" fill="#D7EEE3"/>
+    <rect x="259" y="170" width="30" height="104" rx="3" fill="#F8D76E"/>
+    <rect x="307" y="228" width="30" height="46" rx="3" fill="#F6D9E3"/>
+    <path d="M207 282h136" stroke="#7594FF" stroke-width="2"/>
+  </g>
+  <path d="m287 28 10 20 23-4-4 23 20 11-20 11 4 23-23-4-10 20-11-20-23 4 4-23-20-11 20-11-4-23 23 4 11-20Z" fill="#F8D76E" stroke="#816A27" stroke-width="2"/>
+  <text x="271" y="89" fill="#57481C" font-family="sans-serif" font-size="33" font-weight="700">?</text>
+  <path d="m24 232 9-6m-1 20 9-4M355 54l5 10m8-17 4 11M137 303l-3 11m17-8-1 10" stroke="#9DA79C" stroke-width="3" stroke-linecap="round"/>
+</svg>

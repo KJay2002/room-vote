@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6f2">
+  <meta name="description" content="Room Vote, a live party game for your people.">
+  <title>Room Vote</title>
+  <link rel="icon" href="./ballots.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script defer src="./config.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Room Vote home">
+        <span class="brand-mark"><i data-lucide="vote" aria-hidden="true"></i></span>
+        <h1>room<span>vote</span><span class="brand-period">.</span></h1>
+      </a>
+      <div class="room-identity"><span class="eyebrow">ROOM CODE</span><strong id="room-code">------</strong></div>
+      <div class="header-actions">
+        <span class="connection" id="connection" role="status"><span class="status-dot"></span><span id="connection-label">Not joined</span></span>
+        <button class="button button-outline" id="invite-button" type="button" hidden><i data-lucide="link" aria-hidden="true"></i><span>Invite friends</span></button>
+        <button class="icon-button" id="leave-button" type="button" title="Leave room" aria-label="Leave room" hidden><i data-lucide="log-out" aria-hidden="true"></i></button>
+      </div>
+    </header>
+
+    <div id="connection-banner" class="connection-banner" role="status" hidden>Connection lost. Reconnecting...</div>
+    <div id="host-banner" class="connection-banner" role="status" hidden></div>
+
+    <main class="room-layout">
+      <div class="play-area">
+        <div class="stage-meta"><span class="eyebrow" id="phase-label">THE LOBBY</span><span id="round-meta" class="muted">Ready when you are</span></div>
+        <section id="stage" aria-label="Game board">
+          <div class="lobby-stage">
+            <div class="lobby-copy"><span class="tag"><span class="status-dot"></span>LOBBY OPEN</span><h2>Who's in<br>the room?</h2><p class="lobby-count">Waiting for players</p></div>
+            <img class="ballot-art" src="./ballots.svg" width="350" height="280" alt="Colorful party ballots and a voting chart">
+          </div>
+        </section>
+
+        <section class="guests-section" aria-labelledby="guests-title">
+          <div class="section-heading"><h2 id="guests-title">The guests</h2><span id="guest-meta" class="muted">0 / 2 assigned</span></div>
+          <div id="guest-grid" class="guest-grid">
+            <div class="guest-card empty-guest"><span class="avatar avatar-empty"><i data-lucide="user-round" aria-hidden="true"></i></span><div><strong>Guest 01</strong><span>Not assigned</span></div><i data-lucide="plus" aria-hidden="true"></i></div>
+            <div class="guest-card empty-guest"><span class="avatar avatar-empty"><i data-lucide="user-round" aria-hidden="true"></i></span><div><strong>Guest 02</strong><span>Not assigned</span></div><i data-lucide="plus" aria-hidden="true"></i></div>
+          </div>
+        </section>
+
+        <details id="owner-audit" class="owner-audit" hidden>
+          <summary><span><i data-lucide="scan-eye" aria-hidden="true"></i>Ballot audit</span><span class="owner-label"><i data-lucide="lock-keyhole" aria-hidden="true"></i>Owner only</span></summary>
+          <div class="audit-controls"><label for="audit-round">Question</label><select id="audit-round"><option value="current">Current question</option></select></div>
+          <div class="table-scroll"><table><thead><tr><th scope="col">Player</th><th scope="col">Role</th><th scope="col">Voted for</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
+        </details>
+      </div>
+
+      <aside class="room-sidebar" aria-label="Room roster">
+        <div class="section-heading"><h2>In the room</h2><span class="count-badge" id="player-count">0</span></div>
+        <div class="roster-label"><span>PLAYERS</span><span id="roster-status">LOBBY</span></div>
+        <ul id="player-list" class="player-list"><li class="empty-roster">No one here yet.</li></ul>
+        <div class="room-settings"><div><i data-lucide="layers" aria-hidden="true"></i><span>Questions</span><strong id="question-count">10</strong></div><div><i data-lucide="timer" aria-hidden="true"></i><span>Per question</span><strong id="timer-setting">10 sec</strong></div><div><i data-lucide="users-round" aria-hidden="true"></i><span>Guests</span><strong>2</strong></div></div>
+        <div class="sidebar-bottom"><span class="mini-mark"><i data-lucide="sparkles" aria-hidden="true"></i></span><span id="self-label">Your seat is waiting.</span></div>
+      </aside>
+    </main>
+
+    <footer class="footer"><span>ROOM VOTE<span class="footer-dot"> / </span><span id="footer-phase">THE LOBBY</span></span><span><i data-lucide="eye" aria-hidden="true"></i>The room owner can see individual votes.</span></footer>
+  </div>
+
+  <dialog id="join-dialog" aria-labelledby="join-title">
+    <form id="join-form" class="join-form">
+      <div class="dialog-symbol"><i data-lucide="vote" aria-hidden="true"></i></div>
+      <span class="eyebrow">ROOM VOTE</span>
+      <h2 id="join-title">Take your seat.</h2>
+      <div class="segmented" aria-label="Room mode"><button id="host-mode" type="button" aria-pressed="true">New room</button><button id="join-mode" type="button" aria-pressed="false">Join room</button></div>
+      <label for="player-name">Your name</label>
+      <input id="player-name" name="name" type="text" maxlength="24" placeholder="e.g. Jamie" autocomplete="nickname" required autofocus>
+      <div id="room-code-field" hidden><label for="join-code">Room code</label><input id="join-code" name="room" type="text" maxlength="6" minlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
+      <p id="join-error" class="form-error" role="alert" hidden></p>
+      <button class="button button-primary join-submit" id="join-submit" type="submit"><span id="join-submit-label">Create room</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
+      <p class="privacy-note"><i data-lucide="eye" aria-hidden="true"></i>The room owner can see your votes.</p>
+    </form>
+  </dialog>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <div class="dialog-heading"><h2 id="settings-title">Game setup</h2><button class="icon-button" type="button" data-close="settings-dialog" title="Close game setup" aria-label="Close game setup"><i data-lucide="x" aria-hidden="true"></i></button></div>
+      <label for="round-seconds">Seconds per question</label><input id="round-seconds" type="number" min="5" max="60" required value="10">
+      <label for="questions-input">Questions <span class="muted">(one per line)</span></label><textarea id="questions-input" rows="10" maxlength="5450" required spellcheck="true"></textarea>
+      <p id="settings-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-footer"><button class="button button-outline" type="button" data-close="settings-dialog">Cancel</button><button class="button button-primary" type="submit" id="save-settings"><i data-lucide="check" aria-hidden="true"></i>Save changes</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="invite-dialog" aria-labelledby="invite-title"><div class="dialog-heading"><h2 id="invite-title">Invite friends</h2><button class="icon-button" data-close="invite-dialog" type="button" title="Close invitation" aria-label="Close invitation"><i data-lucide="x" aria-hidden="true"></i></button></div><label for="invite-url">Room link</label><input id="invite-url" type="url" readonly><button class="button button-primary" id="copy-link" type="button"><i data-lucide="copy" aria-hidden="true"></i>Copy link</button><p id="copy-status" class="muted" role="status"></p></dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+</body>
+</html>
