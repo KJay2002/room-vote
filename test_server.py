@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from server import RoomStore, make_server
+from server import RoomStore, WEB_ROOT, make_server
 
 
 class ServerTests(unittest.TestCase):
@@ -51,6 +51,8 @@ class ServerTests(unittest.TestCase):
             credentials.append(player)
         snapshots = [self.request(f"/api/rooms/{code}/state", token=player["token"])[1]
                      for player in credentials]
+        self.request(f"/api/rooms/{code}/action", {"action": "configure", "questions": ["Who is funniest?", "Who gives advice?"],
+                               "round_seconds": 10, "answer_names": ["Owner", "Member"]}, owner["token"])
         return code, credentials, snapshots
 
     def test_authenticated_players_role_security_and_poll_broadcast(self):
@@ -71,7 +73,7 @@ class ServerTests(unittest.TestCase):
             waiting = pool.submit(self.request, path + f"/state?version={before['version']}",
                                   None, member["token"])
             self.request(path + "/action", {
-                "action": "vote", "candidate_id": snapshots[1]["self_id"], "question_index": 0,
+                "action": "vote", "candidate_id": "option-002", "question_index": 0,
             }, first_guest["token"])
             status, after = waiting.result(timeout=3)
         self.assertEqual(after["vote_count"], 1)
@@ -120,6 +122,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("/api/rooms/MISSING/state")[0], 404)
         self.assertEqual(self.request("/game.py")[0], 404)
 
+    def test_late_joiner_can_vote_without_changing_answers_or_roles(self):
+        code, credentials, snapshots = self.room_with_players()
+        path = f"/api/rooms/{code}"
+        owner = credentials[0]["token"]
+        self.request(path + "/action", {"action": "guests", "guest_ids": [snapshots[2]["self_id"], snapshots[3]["self_id"]]}, owner)
+        self.request(path + "/action", {"action": "start"}, owner)
+        status, late = self.request(path + "/join", {"name": "Late player"})
+        self.assertEqual(status, 201)
+        status, state = self.request(path + "/state", token=late["token"])
+        self.assertEqual(state["phase"], "question")
+        self.assertEqual([option["name"] for option in state["answer_options"]], ["Owner", "Member"])
+        self.assertEqual(next(player for player in state["players"] if player["id"] == state["self_id"])["role"], "player")
+        self.assertEqual(self.request(path + "/action", {"action": "vote", "candidate_id": "option-002", "question_index": 0}, late["token"])[0], 200)
+        self.assertEqual(self.request(path + "/action", {"action": "guests", "guest_ids": []}, late["token"])[0], 400)
+
     def test_static_frontend_and_security_headers(self):
         for path in ("/", "/app.js", "/styles.css", "/config.js", "/ballots.svg"):
             with urlopen(self.base + path, timeout=3) as response:
@@ -142,6 +159,33 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("/api/rooms", {"name": "Pages owner"}, origin=origin)[0], 201)
         self.assertEqual(self.request("/api/rooms", {"name": "Blocked"},
                                       origin="https://elsewhere.example")[0], 403)
+
+    def test_local_only_uses_python_without_changing_firebase_configuration(self):
+        original = (WEB_ROOT / "config.js").read_bytes()
+        local_server = make_server("127.0.0.1", 0, self.store, local_only=True)
+        local_thread = threading.Thread(target=local_server.serve_forever, daemon=True)
+        local_thread.start()
+        local_base = f"http://127.0.0.1:{local_server.server_port}"
+        try:
+            with urlopen(local_base + "/config.js", timeout=3) as response:
+                configuration = response.read().decode()
+                self.assertIn('backend: "python"', configuration)
+                self.assertNotIn("firebase", configuration)
+                self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
+                self.assertIn("connect-src 'self'", response.headers["Content-Security-Policy"])
+            with urlopen(Request(local_base + "/config.js", method="HEAD"), timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.read(), b"")
+                self.assertEqual(int(response.headers["Content-Length"]), len(configuration.encode()))
+            with urlopen(local_base + "/", timeout=3) as response:
+                self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+            self.assertEqual((WEB_ROOT / "config.js").read_bytes(), original)
+            with self.assertRaises(ValueError):
+                make_server("0.0.0.0", 0, self.store, local_only=True)
+        finally:
+            local_server.shutdown()
+            local_server.server_close()
+            local_thread.join(timeout=2)
 
 
 if __name__ == "__main__":

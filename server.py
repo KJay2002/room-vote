@@ -58,7 +58,7 @@ class LiveRoom:
         if self.game.phase != "question" or self.game.deadline is None:
             self.timer = None
             return
-        self.timer = threading.Timer(max(0, self.game.deadline - time.monotonic()), self.expire)
+        self.timer = threading.Timer(min(threading.TIMEOUT_MAX, max(0, self.game.deadline - time.monotonic())), self.expire)
         self.timer.daemon = True
         self.timer.start()
 
@@ -87,7 +87,7 @@ class LiveRoom:
             elif action == "guests":
                 self.game.set_guests(player.id, data.get("guest_ids"))
             elif action == "configure":
-                self.game.configure(player.id, data.get("questions"), data.get("round_seconds"))
+                self.game.configure(player.id, data.get("questions"), data.get("round_seconds"), data.get("answer_names"))
             elif action == "start":
                 self.game.start(player.id)
                 self.arm_timer()
@@ -202,9 +202,10 @@ class RoomStore:
 class GameHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def __init__(self, *args, store: RoomStore, allowed_origins: set[str], **kwargs):
+    def __init__(self, *args, store: RoomStore, allowed_origins: set[str], local_only: bool = False, **kwargs):
         self.store = store
         self.allowed_origins = allowed_origins
+        self.local_only = local_only
         super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
 
     def setup(self) -> None:
@@ -224,6 +225,11 @@ class GameHandler(SimpleHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Cache-Control", "no-store")
+        if self.local_only:
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; "
+                             "connect-src 'self'; style-src 'self' 'unsafe-inline'; "
+                             "img-src 'self' data:; font-src 'self'; object-src 'none'; "
+                             "base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
         origin = self.headers.get("Origin")
         if origin and self.origin_allowed():
             self.send_header("Access-Control-Allow-Origin", origin)
@@ -254,7 +260,7 @@ class GameHandler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             raise RequestError(400, "Invalid request length.") from None
-        if not 0 < length <= 16384:
+        if not 0 < length <= 1048576:
             raise RequestError(413, "The request is empty or too large.")
         try:
             data = json.loads(self.rfile.read(length))
@@ -296,6 +302,15 @@ class GameHandler(SimpleHTTPRequestHandler):
                 return
             if method not in ("GET", "HEAD"):
                 raise RequestError(405, "Method not allowed.")
+            if self.local_only and parts.path == "/config.js":
+                content = b'window.ROOM_VOTE_CONFIG = { backend: "python", apiBase: "" };\n'
+                self.send_response(200)
+                self.send_header("Content-Type", "text/javascript; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                if method == "GET":
+                    self.wfile.write(content)
+                return
             relative_path = parts.path.lstrip("/") or "index.html"
             candidate = (WEB_ROOT / relative_path).resolve()
             if not candidate.is_relative_to(WEB_ROOT.resolve()) or not candidate.is_file():
@@ -345,10 +360,13 @@ class GameHandler(SimpleHTTPRequestHandler):
             raise RequestError(405, "Method not allowed.")
 
 
-def make_server(host: str, port: int, store: RoomStore | None = None) -> ThreadingHTTPServer:
+def make_server(host: str, port: int, store: RoomStore | None = None, *, local_only: bool = False) -> ThreadingHTTPServer:
+    if local_only and host not in ("127.0.0.1", "localhost"):
+        raise ValueError("Local-only mode requires a loopback host.")
     allowed = {origin.strip().rstrip("/") for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
                if origin.strip()}
-    handler = partial(GameHandler, store=store or RoomStore(), allowed_origins=allowed)
+    handler = partial(GameHandler, store=store or RoomStore(), allowed_origins=set() if local_only else allowed,
+                      local_only=local_only)
     return ThreadingHTTPServer((host, port), handler)
 
 
@@ -356,10 +374,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Room Vote live party game")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8000")))
+    parser.add_argument("--local-only", action="store_true", help="Use local Python rooms and block external page resources")
     arguments = parser.parse_args()
+    if arguments.local_only and arguments.host not in ("127.0.0.1", "localhost"):
+        parser.error("--local-only requires --host 127.0.0.1 or localhost")
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     store = RoomStore()
-    server = make_server(arguments.host, arguments.port, store)
+    server = make_server(arguments.host, arguments.port, store, local_only=arguments.local_only)
     LOGGER.info("Room Vote is running at http://%s:%s", arguments.host, server.server_port)
     try:
         server.serve_forever()

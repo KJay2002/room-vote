@@ -1,27 +1,36 @@
 # Room Vote
 
-A live, small-group party game with members, exactly two guests, and a room owner.
+A live, small-group party game with Players, exactly two Members, and a room owner.
 Players only need a browser. Choose one of two modes:
 
 - **GitHub Pages + Firebase:** the webpage runs on GitHub Pages; Firebase Authentication and Realtime Database provide shared rooms and private votes. No Python hosting or Render service is required.
 - **Local Python:** the original standard-library server remains available for local play. No Python package installation is required.
 
-This checkout uses `backend: "python"` in [web/config.js](web/config.js) for GitHub Pages + Render. Set `apiBase` to the deployed Render service's HTTPS address before publishing the frontend. The optional `backend: "auto"` setting selects Firebase when a Firebase project is configured or the page is opened on `github.io`; otherwise it uses Python. Firebase mode remains available using your own Firebase project.
+This checkout uses `backend: "firebase"` in [web/config.js](web/config.js) for GitHub Pages + Firebase. For local Python play, select `backend: "python"` and leave `apiBase` empty. For GitHub Pages + Render, use Python mode and set `apiBase` to the deployed Python service's HTTPS address. Do not publish a local test configuration over the production Firebase settings.
 
 ## Rules
 
 1. Everyone enters a name before joining. The person creating a room is its owner.
-2. Everyone starts as a member. Before starting, the owner checks **Guest** beside exactly two other players.
-3. Every player, including the owner and both guests, votes for one **member**. Guests are not ballot options. Self-votes are allowed.
+2. Everyone starts as a **Player**. Before starting, the owner checks **Member** beside exactly two other participants. These are the two people whose predictions earn points; the owner remains a Player.
+3. Everyone votes for a name from the **fixed answer list**, not the lobby roster. **Game setup > Player names / answer options** starts with 16 editable placeholders. Replace them with your own names, one per line. A listed person does not need to join the room, and a participant's name does not become an answer automatically. The same list is used for every question and cannot change during the game.
 4. Each question lasts **10 seconds** by default. Players may change their vote until the backend's deadline. Only their most recent accepted vote counts. In Firebase mode the database enforces that deadline, and the owner's open tab publishes results afterward.
-5. The member with the **unique highest vote count** is the round's winning answer. This is a plurality, not necessarily more than 50% of all votes. Guest votes count toward this total too.
-6. Each guest whose pick matches that answer receives **one point**. Both guests can score in the same round. Ties for first place, no votes, and missing guest votes award no points.
-7. Results show every member in a highest-to-lowest horizontal bar chart, including zero-vote members, plus both guests' picks and scores.
-8. The owner advances to the next question when everyone has seen the results. After the final question, **Final scores** shows the guest leaderboard and round history. Equal positive scores produce a shared victory.
+5. The answer with the **unique highest vote count** wins that question. This is a plurality, not necessarily more than 50% of all votes. Votes from the owner, Players, and both Members all count.
+6. Each Member whose pick matches that answer receives **one point**. Both Members can score in the same question. Ties for first place, no votes, and missing Member votes award no points.
+7. Results show every answer in a highest-to-lowest horizontal bar chart, including zero-vote answers, plus both Members' picks and scores.
+8. The owner advances to the next question after viewing the results. After the final question, **Final scores** shows the Member leaderboard, question history, and the owner's export. Equal positive scores produce a shared victory.
+9. New people can join during a question or between questions as Players. They can vote on the current question only before its deadline. The two Members and the fixed answer list stay unchanged. Past results keep their original participant counts, so late arrivals are not counted as missed votes for earlier questions.
 
-The owner can see individual ballots live and inspect prior questions under **Ballot audit**. Other players receive only their own current pick; aggregate results and guest picks are revealed after voting closes. The owner remains a member because they have privileged ballot access.
+The owner can see individual ballots live and inspect prior questions under **Ballot audit**. Other participants receive only their own current pick; aggregate results and Member picks are revealed after voting closes.
 
-At least three players are needed: one owner/member and two guests. Having more members makes the questions more interesting. The room supports up to 40 players.
+At least three participants are needed: one owner/Player and two Members. The room supports up to 40 participants. There is no 30-question cap or 5-to-60-second timer restriction: use at least one question and a positive whole number of seconds. Question text remains limited to 180 printable characters and answer names to 48 characters; normal browser, request-size, and Firebase quotas still apply.
+
+### Live Scoreboard And Excel Export
+
+The live scoreboard updates for everyone after each completed question. Each bar counts the questions where an answer received the maximum votes, including tied leads. Select a bar to see the specific question numbers, text, vote counts, and whether the lead was tied. Zero-vote questions are not counted as leads. This summary does not reveal a question's votes before its deadline.
+
+After the owner selects **Final scores** at the end of the entire set, **Export to Excel** downloads one Excel-compatible `.xml` workbook. The export is not offered between questions or to non-owners. It contains six worksheets: **Round**, **Questions**, **Scoreboard**, **Top questions**, **Vote details**, and **Member scores**. Historical vote details include only the people who participated in that question.
+
+The workbook uses SpreadsheetML XML, not `.xlsx`, and can be opened in Excel. All text is escaped and stored as literal string cells; there are no macros, executable formulas, remote links, or spreadsheet-library downloads. The clickable chart is in the live game; the workbook contains the corresponding tables. The file is generated locally in the owner's browser from their authorized ballot history and is not uploaded to another service. Browser or Office security policies may still display their normal download/protected-view notices.
 
 ## Run On Your Computer
 
@@ -31,21 +40,23 @@ Requires Python 3.11 or newer. Tested with Python 3.13.7. No package installatio
 2. Run:
 
    ```powershell
-   py -3 server.py
+   py -3 server.py --local-only
    ```
 
-   On a system where the Python launcher is unavailable, use `python server.py` instead.
+   On a system where the Python launcher is unavailable, use `python server.py --local-only` instead. This mode serves a temporary Python configuration and blocks external page resources without editing the saved Firebase settings. It is loopback-only; remote fonts and icons are not loaded.
 
 3. Open **http://127.0.0.1:8000**.
 4. Enter your name and choose **Create room**. You are now the owner.
 5. Select **Invite friends** to obtain the room link. A link created at `127.0.0.1` works only on this computer, not on your friends' computers.
 6. For a local test, open that link in separate tabs and enter different names. A normal new tab has its own session; duplicating an existing tab can copy its session instead. Keep same-browser local tests to a few tabs, or use separate browser profiles, because browsers limit simultaneous HTTP/1.1 connections to one origin.
-7. Assign exactly two guests in the roster. Both must be connected. **Game setup** lets you edit the questions and choose a timer from 5 to 60 seconds.
+7. Assign exactly two Members in the roster. Both must be connected. **Game setup** lets you edit the questions, set a positive whole-number timer, and supply the fixed answer names.
 8. Select **Start game**. Everyone votes, results arrive automatically at the deadline, and the owner selects **Next question**.
 
-If port 8000 is already occupied, run `py -3 server.py --port 8001` and open http://127.0.0.1:8001.
+If port 8000 is already occupied, run `py -3 server.py --local-only --port 8001` and open http://127.0.0.1:8001.
 
 ### Test From Phones On The Same Wi-Fi
+
+For this separate LAN mode, select `backend: "python"` and empty `apiBase` in the frontend configuration first. Do not publish that change over the production Firebase configuration. The `--local-only` flag is not used for LAN access.
 
 1. Stop the previous server with Ctrl+C. Stopping the server clears its rooms.
 2. Run:
@@ -62,13 +73,13 @@ Do not use router port forwarding to expose this development server directly to 
 
 ## GitHub Pages + Firebase
 
-This is an alternative for a `github.io` invitation without hosting Python. The selected deployment for this repository uses Python on Render instead. Firebase mode uses your own Firebase project, not the example pickleball site's database or credentials.
+This is the selected deployment for a `github.io` invitation without hosting Python. It uses the owner's Firebase project, not either example site's database or credentials.
 
 ### 1. Confirm Publication Permission
 
 Use a GitHub account that is allowed to create the repository and publish Pages. The current enterprise-managed account was marked **disabled by policy** in the repository Owner menu. This code change cannot override that policy. Use an authorized personal account only if external publication is approved, or ask the enterprise administrator for an approved internal deployment.
 
-Publishing this game does not require changing the account used for Copilot in VS Code. No repository, cloud project, or public deployment has been created automatically.
+Publishing this game does not require changing the account used for Copilot in VS Code. The approved repository is `KJay2002/room-vote`; the configured Firebase project is `room-vote`.
 
 ### 2. Create Your Firebase Project
 
@@ -114,13 +125,17 @@ No `ALLOWED_ORIGINS`, Render URL, local IP address, or Python backend is needed 
 
 GitHub uploads and Firebase Rules publishing are separate steps. Changing a local rules file does not change the live database's rules until you publish them in Firebase.
 
+**Updating an older deployment:** the fixed answer list, late joining, participant snapshots, and expanded setup limits require the matching database rules and frontend together. Do not publish only the UI. Keep existing stored data, finish any active games before the update, and create a new room afterward; old rooms and old browser tabs use the previous candidate-ID format and are not automatically migrated. The internal `guest_ids` / `guest_votes` keys remain for storage compatibility, but the visible role is now Member.
+
 ### 5. Verify Your Deployment
 
-1. Join one room from at least three independent browser sessions: one owner/member and two guests. Additional members make the game more useful.
-2. Confirm all names appear, then assign exactly two connected guests and start a question.
+1. Join one room from at least three independent browser sessions: one owner/Player and two Members.
+2. Configure the fixed answer names, confirm all participants appear, assign exactly two connected Members, and start a question.
 3. Vote from each device. The owner can open **Ballot audit**; other players must not have it.
-4. At the deadline, the descending chart and both guests' picks should appear on every connected device. A matching guest gains one point; ties do not score.
-5. Refresh a player tab to check reconnection, then advance and return to the lobby for another game.
+4. At the deadline, the descending chart and both Members' picks should appear on every connected device. A matching Member gains one point; ties do not score.
+5. Join from another session while the next question is running. Verify the newcomer is a Player and sees the same fixed answer list.
+6. Select a live-scoreboard bar to inspect that answer's completed questions. Finish all questions and check the owner's Excel export, including original participation counts before the late join.
+7. Refresh a participant tab to check reconnection, then return to the lobby for another game.
 
 The Python `/health` endpoint does not apply to Firebase mode. Permission-denied errors usually mean the rules were not published, the Firebase project/database values do not match, or the room state no longer permits the action. An `auth/operation-not-allowed` error means Anonymous sign-in needs to be enabled. If an organization blocks Firebase, ask IT for an approved hosting approach rather than bypassing the network policy.
 
@@ -128,7 +143,7 @@ The Python `/health` endpoint does not apply to Firebase mode. Permission-denied
 
 - **Keep the owner tab open and active.** Firebase enforces the vote cutoff using its own server time, but the owner's browser calculates and publishes results. If that browser disconnects, sleeps, or throttles timers, results wait for it to resume. A banner warns players when the owner disconnects. There is no background Cloud Function or autonomous timer service in this version.
 - **The owner is trusted.** Database rules prevent ordinary players from assigning roles, reading others' ballots, submitting another player's vote, changing the timer, or writing results. They do not independently recalculate the owner's aggregate scores. A malicious owner could publish an incorrect aggregate. Trusted server-side scoring would require an additional backend or Cloud Function.
-- **Private votes stay in private database paths.** Ordinary players read only their own ballots; the owner can read every ballot. Results publish totals and guest picks, not all individual member votes. This is enforced in database rules, not just by hiding UI controls.
+- **Private votes stay in private database paths.** Ordinary participants read only their own ballots; the owner can read every ballot. Results publish totals and the two Members' picks, not all individual Player votes. This is enforced in database rules, not just by hiding UI controls.
 - **Display names are not verified identities.** Anonymous Authentication gives each session an ID, not proof of a unique person. Someone could create another session under a different name. Names are case-insensitively unique per room and cannot contain `. # $ [ ] /` in this Firebase version.
 - **Owner access is session-based.** Refreshing the same tab retains the anonymous login and room session. Closing it, clearing browser storage, or changing devices can lose the owner's access. A new tab may create a separate player; duplicating a tab may copy its session.
 - **Rooms and ballots persist in Firebase.** Unlike Python's in-memory rooms, Firebase data survives webpage redeployment. **Play again** starts a new game ID and resets the displayed scores; old database records remain stored. There is no automatic expiry or deletion job. Delete stale rooms under `rooms` in your Firebase console when appropriate, and tell participants your retention policy.
@@ -217,9 +232,9 @@ The included [render.yaml](render.yaml) provides the same setup for Render's **N
 1. Open your Render HTTPS URL. It serves the actual game, not just an API.
 2. Create a room with your name.
 3. Invite friends using the generated link, for example `https://room-vote-example.onrender.com/?room=ABC123`.
-4. Assign two connected guests and start.
+4. Assign two connected Members, configure the answer names, and start.
 
-No changes to [web/config.js](web/config.js) are needed for this option. An empty `apiBase` means "use the same server as the webpage."
+Select `backend: "python"` in [web/config.js](web/config.js) for this option. An empty `apiBase` means "use the same server as the webpage."
 
 ## Option B: Use A github.io Link
 
@@ -264,8 +279,8 @@ Later pushes that change the frontend trigger another Pages deployment. If your 
 
 - Open `https://YOUR_SERVICE.onrender.com/health`; it should return `{"status": "ok"}`.
 - Open the Pages frontend on two different devices or browser profiles and join the same room.
-- Confirm that names and guest assignments update on both screens.
-- Run a round and confirm that the chart, guest picks, and scores agree.
+- Confirm that participant names, fixed answer options, and Member assignments update on both screens.
+- Run a round and confirm that the chart, Member picks, and scores agree.
 - Confirm that the ballot audit appears only for the owner.
 - A CORS error usually means `ALLOWED_ORIGINS` does not exactly match the frontend's origin.
 - A mixed-content error means an HTTPS frontend is trying to contact an HTTP backend. Use the Render **HTTPS** URL.
@@ -279,8 +294,8 @@ The following limits refer to the **Python backend**. Firebase-specific limits a
 - **Rooms are in memory.** Restarting, redeploying, or stopping the Python process loses names, roles, scores, ballots, and owner sessions. Inactive rooms expire after two hours. The instance limits rooms to 30 and each room to 40 players.
 - **Run one process and one instance.** Multiple independent workers will not share rooms. Scaling requires a shared database or Redis-backed state and cross-process notifications.
 - **Keep the owner's browser tab.** Refreshing reconnects with the private session stored in that tab. Closing the tab, clearing session storage, or switching devices can lose owner access. There is no global root password or automatic owner transfer. Create a new room if that session is lost.
-- **Names are display names, not verified accounts.** Anyone with the invitation can join the lobby. Duplicate names are rejected, but a person could join under another name. The owner can remove unwanted players before starting. New joins and role changes are blocked once the game begins; existing sessions can reconnect.
-- **Privacy:** individual votes are intentionally owner-visible. Other players see totals and guests' revealed picks after the deadline. Do not share session storage, authorization headers, or developer-tool dumps.
+- **Names are display names, not verified accounts.** Anyone with the invitation can join, including during an active game. Duplicate names are rejected, but a person could join under another name. The owner can remove unwanted participants in the lobby. Role changes and answer-list edits are blocked once the game begins; late joiners become Players and existing sessions can reconnect.
+- **Privacy:** individual votes are intentionally owner-visible. Other participants see totals and the Members' revealed picks after the deadline. Do not share session storage, authorization headers, or developer-tool dumps.
 - **Presence is approximate.** A disconnected player is marked as reconnecting after about 45 seconds. An absent vote is not counted; the round still ends on time.
 - **Free Render instances have limitations.** Current documentation says they can spin down after 15 minutes without inbound traffic, can take about a minute to wake, have monthly usage limits, and may restart. An active game sends requests, but that is not an uptime guarantee. Choose an appropriate paid service for a scheduled event; RAM-only rooms can still be lost on any restart.
 - The interface loads Google Fonts and Lucide icons from public CDNs. Core gameplay does not depend on those services, but restricted/offline networks can lose the custom fonts or icons. The ballot illustration is local.

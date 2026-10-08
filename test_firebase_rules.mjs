@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { after, before, beforeEach, test } from "node:test";
 import { assertFails, assertSucceeds, initializeTestEnvironment } from "@firebase/rules-unit-testing";
 import { serverTimestamp } from "firebase/database";
-import { createControl, normalizeName, roundResult } from "./web/firebase-model.mjs";
+import { createControl, normalizeName, roundResult, validateAnswerNames } from "./web/firebase-model.mjs";
+import { completedRoundReport } from "./web/round-report.mjs";
 import { createFirebaseClient } from "./web/firebase-client.mjs";
 
 let environment;
@@ -98,32 +99,32 @@ test("rules: exactly two connected guests and valid owner-controlled transitions
   await assertFails(database("owner").ref(`${base}/control`).update({ phase: "question", question_index: 0, started_at: serverTimestamp() }));
 });
 
-test("rules: private ballots, one vote per identity, member-only candidates", async () => {
+test("rules: private ballots, one vote per identity, fixed answer candidates", async () => {
   await begin();
-  await assertSucceeds(castVote("guest-one", "member"));
-  await assertSucceeds(castVote("guest-two", "owner"));
+  await assertSucceeds(castVote("guest-one", "option-002"));
+  await assertSucceeds(castVote("guest-two", "option-001"));
   await assertFails(database("member").ref(`${base}/votes/${gameId}/0/guest-one`).once("value"));
   await assertFails(database("member").ref(`${base}/votes`).once("value"));
   await assertSucceeds(database("owner").ref(`${base}/votes`).once("value"));
   await assertSucceeds(database("guest-one").ref(`${base}/votes/${gameId}/0/guest-one`).once("value"));
-  await assertFails(database("outsider").ref(`${base}/players`).once("value"));
+  await assertFails(database("outsider").ref(`${base}/results`).once("value"));
   await assertFails(castVote("member", "guest-one"));
-  await assertFails(castVote("outsider", "member"));
-  await assertFails(castVote("member", "member", "1"));
-  await assertFails(castVote("member", "member", "0", "older-game"));
+  await assertFails(castVote("outsider", "option-002"));
+  await assertFails(castVote("member", "option-002", "1"));
+  await assertFails(castVote("member", "option-002", "0", "older-game"));
   await assertFails(database("owner").ref(`${base}/votes/${gameId}/0/guest-one/candidate_id`).set("owner"));
   await assertFails(database("member").ref(`${base}/voted/${gameId}/0/member`).set(true));
-  await assertSucceeds(castVote("guest-one", "owner"));
+  await assertSucceeds(castVote("guest-one", "option-001"));
   const ballots = (await database("owner").ref(`${base}/votes/${gameId}/0`).once("value")).val();
   assert.equal(Object.keys(ballots).length, 2);
-  assert.equal(ballots["guest-one"].candidate_id, "owner");
+  assert.equal(ballots["guest-one"].candidate_id, "option-001");
 });
 
 test("rules: the database deadline rejects late votes even before the owner reveals", async () => {
   const room = lobby();
   room.control = { ...room.control, phase: "question", question_index: 0, started_at: Date.now() - 20000 };
   await seed(room);
-  await assertFails(castVote("member", "owner"));
+  await assertFails(castVote("member", "option-001"));
   await assertFails(database("owner").ref(`${base}/control/started_at`).set(serverTimestamp()));
   await assertFails(database("owner").ref(`${base}/control/round_seconds`).set(60));
 });
@@ -152,7 +153,35 @@ test("rules: removing a guest is atomic and invalidates their room access", asyn
   await assertFails(database("guest-one").ref(`${base}/presence/guest-one/new`).set(true));
 });
 
-test("transport: four anonymous players finish a timed round, reconnect and reset", { timeout: 25000 }, async () => {
+test("rules: late joining allows a current vote but never role changes or answer-list edits", async () => {
+  const room = await begin();
+  const late = database("late");
+  await assertSucceeds(late.ref(base).update({
+    "players/late": { ...normalizeName("Late player"), joined_at: serverTimestamp() },
+    "names/late player": "late", player_count: 5,
+  }));
+  await assertSucceeds(castVote("late", "option-016"));
+  await assertFails(late.ref(`${base}/control/guest_ids`).set(["late", "guest-one"]));
+  await assertFails(late.ref(`${base}/control/answer_options/option-016`).set("Changed"));
+  await assertFails(database("owner").ref(`${base}/control/answer_options/option-016`).set("Changed"));
+  await assertFails(late.ref(`${base}/votes/${gameId}/0/guest-one`).once("value"));
+  const control = (await database("owner").ref(`${base}/control`).once("value")).val();
+  assert.deepEqual(control.answer_options, room.control.answer_options);
+  assert.deepEqual(control.guest_ids, room.control.guest_ids);
+});
+
+test("rules: many questions and timers outside the old range are accepted only in the lobby", async () => {
+  await seed();
+  const owner = database("owner");
+  const questions = Array.from({ length: 100 }, (unused, index) => `Question ${index + 1}?`);
+  await assertSucceeds(owner.ref(`${base}/control`).update({ questions, round_seconds: 3600 }));
+  await assertSucceeds(owner.ref(`${base}/control/round_seconds`).set(1));
+  await assertFails(owner.ref(`${base}/control/round_seconds`).set(0));
+  await assertFails(owner.ref(`${base}/control/round_seconds`).set(1.5));
+  await assertSucceeds(owner.ref(`${base}/control/answer_options`).set(validateAnswerNames(["Not in room", "Another person"])));
+});
+
+test("transport: fixed answers, live late joins, original participation counts, reconnect and reset", { timeout: 25000 }, async () => {
   const modules = await Promise.all([import("firebase/app"), import("firebase/auth"), import("firebase/database")]);
   const clients = [];
   const failures = [];
@@ -188,7 +217,7 @@ test("transport: four anonymous players finish a timed round, reconnect and rese
     return observer;
   };
   try {
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       clients.push(await createFirebaseClient({
         firebase: { apiKey: "demo-key", projectId: "demo-room-vote", appId: "demo-app",
           databaseURL: "https://demo-room-vote-default-rtdb.firebaseio.com" },
@@ -200,7 +229,7 @@ test("transport: four anonymous players finish a timed round, reconnect and rese
     await owner.until((snapshot) => snapshot.players.some((player) => player.connected));
     const observations = [owner];
     const sessions = [credentials];
-    for (let index = 1; index < clients.length; index += 1) {
+    for (let index = 1; index < 4; index += 1) {
       const session = await clients[index].join(["Jamie", "Noor", "Alex", "Sam"][index], "join", credentials.code);
       sessions.push(session);
       observations.push(await watch(clients[index], session));
@@ -208,22 +237,44 @@ test("transport: four anonymous players finish a timed round, reconnect and rese
     await owner.until((snapshot) => snapshot.players.length === 4 && snapshot.players.every((player) => player.connected));
     await assert.rejects(clients[1].send("guests", { guest_ids: [clients[2].uid, clients[3].uid] }));
     await clients[0].send("guests", { guest_ids: [clients[2].uid, clients[3].uid] });
-    await owner.until((snapshot) => snapshot.players.filter((player) => player.role === "guest").length === 2);
-    await clients[0].send("configure", { questions: ["Who is funniest?"], round_seconds: 5 });
-    await owner.until((snapshot) => snapshot.question_count === 1);
+    await owner.until((snapshot) => snapshot.players.filter((player) => player.role === "member").length === 2);
+    await clients[0].send("configure", { questions: ["Who is funniest?", "Who gives advice?"], round_seconds: 3,
+      answer_names: Array.from({ length: 16 }, (unused, index) => `Answer ${index + 1}`) });
+    await owner.until((snapshot) => snapshot.question_count === 2 && snapshot.round_seconds === 3);
     await clients[0].send("start");
     await Promise.all(observations.map((observation) => observation.until((snapshot) => snapshot.phase === "question")));
-    await Promise.all(clients.map((client, index) => client.send("vote", {
-      candidate_id: index === 3 ? clients[0].uid : clients[1].uid, question_index: 0,
+    const lateSession = await clients[4].join("Late player", "join", credentials.code);
+    const lateObserver = await watch(clients[4], lateSession);
+    observations.push(lateObserver);
+    const lateState = await lateObserver.until((snapshot) => snapshot.phase === "question");
+    assert.equal(lateState.players.find((player) => player.id === clients[4].uid).role, "player");
+    assert.equal(lateState.answer_options.length, 16);
+    await Promise.all(clients.slice(0, 5).map((client, index) => client.send("vote", {
+      candidate_id: index === 3 ? "option-001" : "option-002", question_index: 0,
     })));
-    const audit = await owner.until((snapshot) => snapshot.vote_count === 4 && snapshot.audit.every((row) => row.candidate_id));
-    assert.equal(audit.audit.length, 4);
+    const audit = await owner.until((snapshot) => snapshot.vote_count === 5 && snapshot.audit.every((row) => row.candidate_id));
+    assert.equal(audit.audit.length, 5);
     const results = await Promise.all(observations.map((observation) => observation.until((snapshot) => snapshot.phase === "results")));
-    assert.deepEqual(results[0].result.ranking.map((candidate) => candidate.count), [3, 1]);
+    assert.deepEqual(results[0].result.ranking.slice(0, 2).map((candidate) => candidate.count), [4, 1]);
+    assert.equal(results[0].result.ranking.length, 16);
     assert.equal(results[0].result.guest_votes[0].score, 1);
     for (const snapshot of results.slice(1)) assert.equal("audit" in snapshot, false);
+    const laterSession = await clients[5].join("After first question", "join", credentials.code);
+    const laterObserver = await watch(clients[5], laterSession);
+    const laterState = await laterObserver.until((snapshot) => snapshot.phase === "results");
+    assert.equal(laterState.history[0].participant_count, 5);
+    assert.equal(laterState.players.length, 6);
+    await owner.until((snapshot) => snapshot.players.length === 6);
+    await clients[0].send("advance");
+    await owner.until((snapshot) => snapshot.phase === "question" && snapshot.question_index === 1);
+    await owner.until((snapshot) => snapshot.phase === "results" && snapshot.question_index === 1);
     await clients[0].send("advance");
     await owner.until((snapshot) => snapshot.phase === "finished");
+    const completed = await owner.until((snapshot) => snapshot.audit_history.length === 2);
+    const report = completedRoundReport(completed);
+    assert.equal(report.votes.length, 11);
+    assert.equal(report.questions[0].missingVotes, 0);
+    assert.equal(report.questions[1].missingVotes, 6);
     clients[2].stop();
     const reconnect = await watch(clients[2], sessions[2]);
     const resumed = await reconnect.until((snapshot) => snapshot.phase === "finished");

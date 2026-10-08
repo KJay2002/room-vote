@@ -27,7 +27,7 @@ class Player:
     name: str
     id: str = field(default_factory=lambda: secrets.token_urlsafe(12))
     token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
-    role: str = "member"
+    role: str = "player"
     score: int = 0
     connected: bool = False
 
@@ -38,6 +38,9 @@ class Room:
     owner_id: str = ""
     players: dict[str, Player] = field(default_factory=dict)
     questions: list[str] = field(default_factory=lambda: DEFAULT_QUESTIONS.copy())
+    answer_options: dict[str, str] = field(default_factory=lambda: {
+        f"option-{index:03}": f"Player {index:02}" for index in range(1, 17)
+    })
     round_seconds: int = 10
     phase: str = "lobby"
     question_index: int = -1
@@ -47,9 +50,7 @@ class Room:
     history: list[dict] = field(default_factory=list)
     audit_history: list[dict] = field(default_factory=list)
 
-    def add_player(self, name: str) -> Player:
-        if self.phase != "lobby":
-            raise GameError("This game has started. Wait for the next lobby.")
+    def add_player(self, name: str, now: float | None = None) -> Player:
         if not isinstance(name, str):
             raise GameError("Enter a name between 1 and 24 characters.")
         name = " ".join(name.split())
@@ -59,6 +60,7 @@ class Room:
             raise GameError("This room is full (40 players).")
         if any(player.name.casefold() == name.casefold() for player in self.players.values()):
             raise GameError("That name is already in this room.")
+        self.finish_round(now)
         player = Player(name)
         self.players[player.id] = player
         if not self.owner_id:
@@ -77,35 +79,47 @@ class Room:
         self.require_owner(actor_id)
         self.require_lobby()
         if not isinstance(guest_ids, list) or any(not isinstance(value, str) for value in guest_ids):
-            raise GameError("Choose up to two guests.")
+            raise GameError("Choose up to two members.")
         if len(guest_ids) > 2 or len(set(guest_ids)) != len(guest_ids):
-            raise GameError("Choose up to two different guests.")
+            raise GameError("Choose up to two different members.")
         if self.owner_id in guest_ids or any(value not in self.players for value in guest_ids):
-            raise GameError("Guests must be other players in this room.")
+            raise GameError("Members must be other participants in this room.")
         for player in self.players.values():
-            player.role = "guest" if player.id in guest_ids else "member"
+            player.role = "member" if player.id in guest_ids else "player"
 
-    def configure(self, actor_id: str, questions: list[str], round_seconds: int) -> None:
+    def configure(self, actor_id: str, questions: list[str], round_seconds: int,
+                  answer_names: list[str] | None = None) -> None:
         self.require_owner(actor_id)
         self.require_lobby()
-        if not isinstance(questions, list) or not 1 <= len(questions) <= 30:
-            raise GameError("Use between 1 and 30 questions.")
+        if not isinstance(questions, list) or not questions:
+            raise GameError("Add at least one question.")
         if any(not isinstance(question, str) or not 1 <= len(question.strip()) <= 180
                or not question.strip().isprintable() for question in questions):
             raise GameError("Each question must have 1 to 180 printable characters.")
-        if type(round_seconds) is not int or not 5 <= round_seconds <= 60:
-            raise GameError("The timer must be between 5 and 60 seconds.")
+        if type(round_seconds) is not int or not 1 <= round_seconds <= 9007199254740991:
+            raise GameError("The timer must be a positive whole number of seconds.")
+        if answer_names is not None:
+            if not isinstance(answer_names, list) or not answer_names:
+                raise GameError("Add at least one player name for the answer options.")
+            if any(not isinstance(name, str) for name in answer_names):
+                raise GameError("Each answer name must have 1 to 48 printable characters.")
+            names = [" ".join(name.split()) for name in answer_names]
+            if any(not 1 <= len(name) <= 48 or not name.isprintable() for name in names):
+                raise GameError("Each answer name must have 1 to 48 printable characters.")
+            if len({name.lower() for name in names}) != len(names):
+                raise GameError("Each answer name must be different.")
+            self.answer_options = {f"option-{index:03}": name for index, name in enumerate(names, 1)}
         self.questions = [question.strip() for question in questions]
         self.round_seconds = round_seconds
 
     def start(self, actor_id: str, now: float | None = None) -> None:
         self.require_owner(actor_id)
         self.require_lobby()
-        guests = [player for player in self.players.values() if player.role == "guest"]
+        guests = [player for player in self.players.values() if player.role == "member"]
         if len(guests) != 2:
-            raise GameError("Assign exactly two guests before starting.")
+            raise GameError("Assign exactly two members before starting.")
         if any(not player.connected for player in guests):
-            raise GameError("Both guests must be connected before starting.")
+            raise GameError("Both members must be connected before starting.")
         self.question_index = -1
         self.history.clear()
         self.audit_history.clear()
@@ -129,10 +143,8 @@ class Room:
             raise GameError("That vote belongs to an earlier question.")
         if actor_id not in self.players:
             raise GameError("Join the room before voting.")
-        if not isinstance(candidate_id, str) or candidate_id not in self.players:
-            raise GameError("Choose a member in this room.")
-        if self.players[candidate_id].role != "member":
-            raise GameError("Only members appear on the ballot.")
+        if not isinstance(candidate_id, str) or candidate_id not in self.answer_options:
+            raise GameError("Choose a name from the answer options.")
         self.votes[actor_id] = candidate_id
 
     def finish_round(self, now: float | None = None) -> bool:
@@ -141,8 +153,8 @@ class Room:
             return False
         counts = Counter(self.votes.values())
         ranking = sorted(
-            [{"id": player.id, "name": player.name, "count": counts[player.id]}
-             for player in self.players.values() if player.role == "member"],
+            [{"id": identifier, "name": name, "count": counts[identifier]}
+             for identifier, name in self.answer_options.items()],
             key=lambda row: (-row["count"], row["name"].casefold(), row["id"]),
         )
         highest = ranking[0]["count"] if ranking else 0
@@ -150,20 +162,21 @@ class Room:
         winner_id = leaders[0]["id"] if len(leaders) == 1 else None
         guest_votes = []
         for player in self.players.values():
-            if player.role != "guest":
+            if player.role != "member":
                 continue
             choice = self.votes.get(player.id)
             matched = winner_id is not None and choice == winner_id
             player.score += int(matched)
             guest_votes.append({
                 "id": player.id, "name": player.name, "candidate_id": choice,
-                "candidate_name": self.players[choice].name if choice else None,
+                "candidate_name": self.answer_options[choice] if choice else None,
                 "matched": matched, "score": player.score,
             })
         self.result = {
             "question": self.questions[self.question_index],
             "ranking": ranking, "winner_id": winner_id,
             "tied": len(leaders) > 1, "total_votes": len(self.votes),
+            "participant_count": len(self.players), "participant_ids": list(self.players),
             "guest_votes": guest_votes,
         }
         self.history.append(self.result)
@@ -208,7 +221,7 @@ class Room:
         return [{
             "id": player.id, "name": player.name, "role": player.role,
             "candidate_id": self.votes.get(player.id),
-            "candidate_name": self.players[self.votes[player.id]].name
+            "candidate_name": self.answer_options[self.votes[player.id]]
             if player.id in self.votes else None,
         } for player in self.players.values()]
 
@@ -223,13 +236,14 @@ class Room:
                 "score": player.score, "connected": player.connected,
                 "has_voted": player.id in self.votes,
             } for player in self.players.values()],
+            "answer_options": [{"id": identifier, "name": name} for identifier, name in self.answer_options.items()],
             "question_index": self.question_index, "question_count": len(self.questions),
             "question": self.questions[self.question_index] if self.question_index >= 0 else None,
             "round_seconds": self.round_seconds,
             "remaining_ms": max(0, int((self.deadline - current_time) * 1000))
             if self.deadline is not None else 0,
             "own_vote": self.votes.get(viewer_id), "vote_count": len(self.votes),
-            "result": self.result, "history": self.history if self.phase == "finished" else [],
+            "result": self.result, "history": self.history,
         }
         if owner:
             snapshot["questions"] = self.questions.copy()
