@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: room-vote
+    runtime: python
+    plan: free
+    buildCommand: python -m compileall -q game.py server.py
+    startCommand: python server.py --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://kjay2002.github.io
