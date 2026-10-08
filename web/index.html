@@ -44,11 +44,18 @@
         </section>
 
         <section class="guests-section" aria-labelledby="guests-title">
-          <div class="section-heading"><h2 id="guests-title">The guests</h2><span id="guest-meta" class="muted">0 / 2 assigned</span></div>
+          <div class="section-heading"><h2 id="guests-title">The members</h2><span id="guest-meta" class="muted">0 / 2 assigned</span></div>
           <div id="guest-grid" class="guest-grid">
-            <div class="guest-card empty-guest"><span class="avatar avatar-empty"><i data-lucide="user-round" aria-hidden="true"></i></span><div><strong>Guest 01</strong><span>Not assigned</span></div><i data-lucide="plus" aria-hidden="true"></i></div>
-            <div class="guest-card empty-guest"><span class="avatar avatar-empty"><i data-lucide="user-round" aria-hidden="true"></i></span><div><strong>Guest 02</strong><span>Not assigned</span></div><i data-lucide="plus" aria-hidden="true"></i></div>
+            <div class="guest-card empty-guest"><span class="avatar avatar-empty"><i data-lucide="user-round" aria-hidden="true"></i></span><div><strong>Member 01</strong><span>Not assigned</span></div><i data-lucide="plus" aria-hidden="true"></i></div>
+            <div class="guest-card empty-guest"><span class="avatar avatar-empty"><i data-lucide="user-round" aria-hidden="true"></i></span><div><strong>Member 02</strong><span>Not assigned</span></div><i data-lucide="plus" aria-hidden="true"></i></div>
           </div>
+        </section>
+
+        <section id="live-scoreboard" class="live-scoreboard" aria-labelledby="live-scoreboard-title" hidden>
+          <div class="section-heading"><h2 id="live-scoreboard-title">Live scoreboard</h2><span class="muted" id="scoreboard-completed"></span></div>
+          <div class="scoreboard-labels"><span>ANSWER OPTION</span><span>QUESTIONS LED</span></div>
+          <ol id="member-scoreboard" class="chart scoreboard-chart" aria-label="Questions with the most votes, highest to lowest"></ol>
+          <p class="chart-caption">Ties included</p>
         </section>
 
         <details id="owner-audit" class="owner-audit" hidden>
@@ -60,9 +67,9 @@
 
       <aside class="room-sidebar" aria-label="Room roster">
         <div class="section-heading"><h2>In the room</h2><span class="count-badge" id="player-count">0</span></div>
-        <div class="roster-label"><span>PLAYERS</span><span id="roster-status">LOBBY</span></div>
+        <div class="roster-label"><span>PARTICIPANTS</span><span id="roster-status">LOBBY</span></div>
         <ul id="player-list" class="player-list"><li class="empty-roster">No one here yet.</li></ul>
-        <div class="room-settings"><div><i data-lucide="layers" aria-hidden="true"></i><span>Questions</span><strong id="question-count">10</strong></div><div><i data-lucide="timer" aria-hidden="true"></i><span>Per question</span><strong id="timer-setting">10 sec</strong></div><div><i data-lucide="users-round" aria-hidden="true"></i><span>Guests</span><strong>2</strong></div></div>
+        <div class="room-settings"><div><i data-lucide="layers" aria-hidden="true"></i><span>Questions</span><strong id="question-count">10</strong></div><div><i data-lucide="timer" aria-hidden="true"></i><span>Per question</span><strong id="timer-setting">10 sec</strong></div><div><i data-lucide="users-round" aria-hidden="true"></i><span>Members</span><strong>2</strong></div></div>
         <div class="sidebar-bottom"><span class="mini-mark"><i data-lucide="sparkles" aria-hidden="true"></i></span><span id="self-label">Your seat is waiting.</span></div>
       </aside>
     </main>
@@ -88,14 +95,22 @@
   <dialog id="settings-dialog" aria-labelledby="settings-title">
     <form id="settings-form">
       <div class="dialog-heading"><h2 id="settings-title">Game setup</h2><button class="icon-button" type="button" data-close="settings-dialog" title="Close game setup" aria-label="Close game setup"><i data-lucide="x" aria-hidden="true"></i></button></div>
-      <label for="round-seconds">Seconds per question</label><input id="round-seconds" type="number" min="5" max="60" required value="10">
-      <label for="questions-input">Questions <span class="muted">(one per line)</span></label><textarea id="questions-input" rows="10" maxlength="5450" required spellcheck="true"></textarea>
+      <label for="round-seconds">Seconds per question</label><input id="round-seconds" type="number" min="1" step="1" required value="10">
+      <label for="questions-input">Questions <span class="muted">(one per line)</span></label><textarea id="questions-input" rows="10" required spellcheck="true"></textarea>
+      <label class="answer-names-label" for="answer-names-input">Player names / answer options <span class="muted">(one per line)</span></label><textarea id="answer-names-input" rows="8" required spellcheck="false"></textarea>
       <p id="settings-error" class="form-error" role="alert" hidden></p>
       <div class="dialog-footer"><button class="button button-outline" type="button" data-close="settings-dialog">Cancel</button><button class="button button-primary" type="submit" id="save-settings"><i data-lucide="check" aria-hidden="true"></i>Save changes</button></div>
     </form>
   </dialog>
 
   <dialog id="invite-dialog" aria-labelledby="invite-title"><div class="dialog-heading"><h2 id="invite-title">Invite friends</h2><button class="icon-button" data-close="invite-dialog" type="button" title="Close invitation" aria-label="Close invitation"><i data-lucide="x" aria-hidden="true"></i></button></div><label for="invite-url">Room link</label><input id="invite-url" type="url" readonly><button class="button button-primary" id="copy-link" type="button"><i data-lucide="copy" aria-hidden="true"></i>Copy link</button><p id="copy-status" class="muted" role="status"></p></dialog>
+
+  <dialog id="member-questions-dialog" aria-labelledby="member-questions-title">
+    <div class="dialog-heading"><h2 id="member-questions-title">Questions led</h2><button class="icon-button" data-close="member-questions-dialog" type="button" title="Close member questions" aria-label="Close member questions"><i data-lucide="x" aria-hidden="true"></i></button></div>
+    <p class="muted" id="member-questions-totals"></p>
+    <ol class="member-question-list" id="member-questions-list"></ol>
+    <p class="muted" id="member-questions-empty" hidden>No top-voted questions yet.</p>
+  </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
   <div id="announcer" class="sr-only" aria-live="polite"></div>

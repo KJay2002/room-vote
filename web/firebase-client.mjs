@@ -1,5 +1,5 @@
 import {
-  createControl, guestIds, isConnected, normalizeName, roomSnapshot, roundResult, validateGuests, validateSettings,
+  answerOptions, createControl, guestIds, isConnected, normalizeName, roomSnapshot, roundResult, validateGuests, validateSettings,
 } from "./firebase-model.mjs";
 
 const SDK_VERSION = "12.19.0";
@@ -111,11 +111,11 @@ class FirebaseRoomClient {
         this.sdk.get(this.reference(`${path}/control`)), this.sdk.get(this.reference(`${path}/players`)),
       ]);
     } catch {
-      throw new Error("This game has started. Wait for the owner to return to the lobby.");
+      throw new Error("Could not read this room. Check the invitation and database permissions.");
     }
     const roster = players.val() || {};
     if (roster[this.uid]) return { code, uid: this.uid, backend: "firebase" };
-    if (control.val()?.phase !== "lobby") throw new Error("This game has started. Wait for the next lobby.");
+    if (!control.val()?.answer_options) throw new Error("This room uses an older game version. Ask the owner to create a new room.");
     if (Object.values(roster).some((player) => player.name_key === profile.name_key)) {
       throw new Error("That name is already in this room.");
     }
@@ -126,7 +126,7 @@ class FirebaseRoomClient {
         player_count: this.sdk.increment(1),
       });
     } catch (error) {
-      throw new Error(`Could not join. The name may have been taken or the game may have started. ${errorMessage(error).message}`);
+      throw new Error(`Could not join. The name may have been taken or the room may be full. ${errorMessage(error).message}`);
     }
     return { code, uid: this.uid, backend: "firebase" };
   }
@@ -163,7 +163,7 @@ class FirebaseRoomClient {
       clearTimeout(roundTimer);
       if (stopped || !online || !owner || settling || ready.size < expected || room.control?.phase !== "question") return;
       const remaining = room.control.started_at + room.control.round_seconds * 1000 - this.now();
-      roundTimer = setTimeout(finish, Math.max(80, remaining + 150));
+      roundTimer = setTimeout(finish, Math.min(2147483647, Math.max(80, remaining + 150)));
     };
     const emit = () => {
       if (stopped || ready.size < expected || !voteReady || !online) return;
@@ -276,7 +276,7 @@ class FirebaseRoomClient {
       if (action === "vote") {
         if (control.phase !== "question" || control.question_index !== values.question_index
             || this.now() >= control.started_at + control.round_seconds * 1000) throw new Error("Voting is closed for this question.");
-        if (!players[values.candidate_id] || guestIds(control).includes(values.candidate_id)) throw new Error("Choose a member in this room.");
+        if (!answerOptions(control).some((option) => option.id === values.candidate_id)) throw new Error("Choose a name from the answer options.");
         await this.sdk.update(this.reference(path), {
           [`votes/${control.game_id}/${control.question_index}/${this.uid}`]: {
             candidate_id: values.candidate_id, submitted_at: this.sdk.serverTimestamp(),
@@ -288,7 +288,7 @@ class FirebaseRoomClient {
         await this.sdk.set(this.reference(`${path}/control/guest_ids`), selected.length ? selected : null);
       } else if (action === "configure") {
         if (control.phase !== "lobby") throw new Error("Game setup can only be changed in the lobby.");
-        await this.sdk.update(this.reference(`${path}/control`), validateSettings(values.questions, values.round_seconds));
+        await this.sdk.update(this.reference(`${path}/control`), validateSettings(values.questions, values.round_seconds, values.answer_names));
       } else if (action === "start" || action === "advance") {
         if ((action === "start" && control.phase !== "lobby") || (action === "advance" && control.phase !== "results")) {
           throw new Error("Wait for the current question to finish.");
@@ -299,7 +299,7 @@ class FirebaseRoomClient {
         }
         const guests = guestIds(control);
         if (guests.length !== 2 || guests.some((identifier) => !isConnected(presence[identifier]))) {
-          throw new Error("Assign exactly two connected guests before starting.");
+          throw new Error("Assign exactly two connected members before starting.");
         }
         await this.sdk.update(this.reference(`${path}/control`), {
           phase: "question", question_index: action === "start" ? 0 : control.question_index + 1,

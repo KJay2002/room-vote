@@ -22,6 +22,18 @@ let toastTimer = null;
 let renderedPhase = "";
 let firebaseClientPromise = null;
 let unsubscribeFirebase = null;
+let reportTools = null;
+let selectedMemberId = null;
+let exporting = false;
+let scoreboardKey = "";
+const reportToolsReady = import("./round-report.mjs").then((module) => {
+  reportTools = module;
+  if (state) render();
+  return module;
+}).catch((error) => {
+  toast("The scoreboard could not load. Refresh the page to try again.");
+  return null;
+});
 
 function sessionKey(code) {
   return `room-vote:${firebaseMode ? `firebase:${settings.firebase?.projectId || "unconfigured"}:` : ""}${code}`;
@@ -91,6 +103,10 @@ function showJoinError(error) {
   state = null;
   setConnection("idle");
   byId("host-banner").hidden = true;
+  byId("live-scoreboard").hidden = true;
+  byId("member-questions-dialog").close();
+  selectedMemberId = null;
+  scoreboardKey = "";
   byId("join-submit").disabled = false;
   byId("join-submit-label").textContent = mode === "host" ? "Create room" : "Join room";
   if (!byId("join-dialog").open) byId("join-dialog").showModal();
@@ -241,27 +257,27 @@ async function sendAction(action, values = {}, quiet = false) {
 }
 
 function renderLobby() {
-  const guests = state.players.filter((player) => player.role === "guest");
+  const guests = state.players.filter((player) => player.role === "member");
   const members = state.players.length - guests.length;
   const ready = guests.length === 2 && guests.every((player) => player.connected);
   return `<div class="lobby-stage"><div class="lobby-copy"><span class="tag"><span class="status-dot"></span>LOBBY OPEN</span>
-    <h2>Who's in<br>the room?</h2><p class="lobby-count">${members} ${members === 1 ? "member" : "members"} &middot; ${guests.length} ${guests.length === 1 ? "guest" : "guests"}</p></div>
+    <h2>Who's in<br>the room?</h2><p class="lobby-count">${members} ${members === 1 ? "player" : "players"} &middot; ${guests.length} ${guests.length === 1 ? "member" : "members"}</p></div>
     <img class="ballot-art" src="./ballots.svg" width="350" height="280" alt="Colorful party ballots and a voting chart"></div>
     <div class="stage-actions">${isOwner()
       ? `<button class="button button-outline" type="button" data-command="settings" ${online ? "" : "disabled"}>${icon("sliders-horizontal")}Game setup</button>
-        <button class="button button-primary" type="button" data-command="start" ${ready && online ? "" : "disabled"} title="${ready ? "Start the first question" : "Exactly two connected guests are required"}">${icon("play")}Start game</button>`
-      : `<span class="waiting-status">${icon("hourglass")}Waiting for the owner to start</span><span class="muted">${guests.length}/2 guests assigned</span>`}</div>`;
+        <button class="button button-primary" type="button" data-command="start" ${ready && online ? "" : "disabled"} title="${ready ? "Start the first question" : "Exactly two connected members are required"}">${icon("play")}Start game</button>`
+      : `<span class="waiting-status">${icon("hourglass")}Waiting for the owner to start</span><span class="muted">${guests.length}/2 members assigned</span>`}</div>`;
 }
 
 function renderQuestion() {
-  const members = state.players.filter((player) => player.role === "member");
-  const guest = selfPlayer()?.role === "guest";
-  const ownChoice = state.players.find((player) => player.id === state.own_vote);
-  return `<div class="question-top"><span class="question-tag ${guest ? "guest" : ""}">${icon(guest ? "sparkles" : "vote")}${guest ? "YOUR GUEST PICK" : "YOUR VOTE"}</span>
+  const options = state.answer_options || [];
+  const guest = selfPlayer()?.role === "member";
+  const ownChoice = options.find((option) => option.id === state.own_vote);
+  return `<div class="question-top"><span class="question-tag ${guest ? "guest" : ""}">${icon(guest ? "sparkles" : "vote")}${guest ? "YOUR MEMBER PICK" : "YOUR VOTE"}</span>
     <div class="timer" id="timer" role="timer" aria-label="Time remaining">${icon("timer")}<span class="timer-number" id="timer-number">10</span><span>sec</span></div></div>
     <h2 class="question-title">${escapeHtml(state.question)}</h2><div class="timer-track" aria-hidden="true"><div id="timer-progress"></div></div>
-    <fieldset class="ballot-grid"><legend class="sr-only">Vote for a member</legend>${members.map((player) => `<label class="ballot" for="vote-${player.id}">${avatar(player)}<strong>${escapeHtml(player.name)}</strong>
-      <input type="radio" name="vote" id="vote-${player.id}" value="${player.id}" data-focus-key="vote-${player.id}" aria-label="Vote for ${escapeHtml(player.name)}" ${state.own_vote === player.id ? "checked" : ""} ${online ? "" : "disabled"}></label>`).join("")}</fieldset>
+    <fieldset class="ballot-grid"><legend class="sr-only">Vote for a name</legend>${options.map((option) => `<label class="ballot" for="vote-${option.id}">${avatar(option)}<strong>${escapeHtml(option.name)}</strong>
+      <input type="radio" name="vote" id="vote-${option.id}" value="${option.id}" data-focus-key="vote-${option.id}" aria-label="Vote for ${escapeHtml(option.name)}" ${state.own_vote === option.id ? "checked" : ""} ${online ? "" : "disabled"}></label>`).join("")}</fieldset>
     <div class="vote-status"><span id="own-vote-status">${icon(ownChoice ? "circle-check" : "circle")}${ownChoice ? `Voted for ${escapeHtml(ownChoice.name)}` : "No vote submitted"}</span><span>${state.vote_count} / ${state.players.length} voted</span></div>`;
 }
 
@@ -270,7 +286,7 @@ function chart(result) {
   return `<ol class="chart" aria-label="Votes, highest to lowest">${result.ranking.map((row) => `<li class="chart-row" aria-label="${escapeHtml(row.name)}: ${row.count} ${row.count === 1 ? "vote" : "votes"}">
     <span class="chart-name">${row.id === result.winner_id ? icon("crown") : ""}${escapeHtml(row.name)}</span>
     <div class="chart-track" aria-hidden="true"><div class="chart-bar" style="width:${row.count / highest * 100}%"></div></div><span class="chart-value">${row.count}</span></li>`).join("")}</ol>
-    <p class="chart-caption">${result.total_votes} ${result.total_votes === 1 ? "vote" : "votes"} cast &middot; ${state.players.length - result.total_votes} did not vote</p>`;
+    <p class="chart-caption">${result.total_votes} ${result.total_votes === 1 ? "vote" : "votes"} cast &middot; ${(result.participant_count ?? state.players.length) - result.total_votes} did not vote</p>`;
 }
 
 function renderResults() {
@@ -286,22 +302,82 @@ function renderResults() {
 }
 
 function renderFinished() {
-  const guests = state.players.filter((player) => player.role === "guest");
+  const guests = state.players.filter((player) => player.role === "member");
   const highest = Math.max(...guests.map((player) => player.score));
   const winners = guests.filter((player) => player.score === highest);
   const title = highest === 0 ? "No matches this time." : winners.length > 1 ? "A shared victory." : `${escapeHtml(winners[0].name)} wins!`;
-  return `<div class="final-heading"><span>${icon("trophy")}</span><h2 class="results-title">${title}</h2></div><p class="results-question">${state.question_count} questions. Final guest scores.</p>
+  return `<div class="final-heading"><span>${icon("trophy")}</span><h2 class="results-title">${title}</h2></div><p class="results-question">${state.question_count} questions. Final member scores.</p>
     <div class="scoreboard">${guests.map((player) => `<div class="score-card ${highest > 0 && player.score === highest ? "winner" : ""}">${avatar(player)}<h3>${escapeHtml(player.name)}</h3><div class="big-score">${player.score} <small>/ ${state.question_count} points</small></div></div>`).join("")}</div>
-    <div class="stage-actions">${isOwner() ? `<button class="button button-primary" type="button" data-command="reset" ${online ? "" : "disabled"}>${icon("rotate-ccw")}Play again</button>` : `<span class="waiting-status">${icon("hourglass")}Waiting for the owner</span>`}</div>
+    <div class="stage-actions">${isOwner() ? `<button class="button button-primary" type="button" data-command="reset" ${online ? "" : "disabled"}>${icon("rotate-ccw")}Play again</button><button class="button button-outline" type="button" data-command="export" title="Download the completed round as an Excel XML workbook" ${reportTools && !exporting ? "" : "disabled"}>${icon("download")}Export to Excel</button>` : `<span class="waiting-status">${icon("hourglass")}Waiting for the owner</span>`}</div>
     <div class="history-list">${state.history.map((result, index) => `<details class="history-round"><summary>${index + 1}. ${escapeHtml(result.question)}</summary><div>${chart(result)}<p class="history-guests">${result.guest_votes.map((guest) => `${escapeHtml(guest.name)}: ${escapeHtml(guest.candidate_name || "No vote")} (${guest.matched ? "+1" : "+0"})`).join("<br>")}</p></div></details>`).join("")}</div>`;
 }
 
+function renderMemberQuestions() {
+  if (!selectedMemberId || !reportTools || !state) return;
+  const member = reportTools.topVoteSummary(state.history || [], state.answer_options).find((candidate) => candidate.id === selectedMemberId);
+  if (!member) {
+    byId("member-questions-dialog").close();
+    selectedMemberId = null;
+    return;
+  }
+  byId("member-questions-title").textContent = `${member.name}: questions led`;
+  byId("member-questions-totals").textContent = `${member.outright} outright / ${member.tied} tied / ${member.totalVotes} total votes`;
+  byId("member-questions-list").innerHTML = member.questions.map((question) => `<li value="${question.number}"><strong>${escapeHtml(question.question)}</strong><span>${question.votes} ${question.votes === 1 ? "vote" : "votes"}${question.tied ? " / Tied lead" : " / Outright lead"}</span></li>`).join("");
+  byId("member-questions-empty").hidden = member.questions.length > 0;
+}
+
+function renderScoreboard() {
+  const visible = Boolean(state && state.phase !== "lobby" && reportTools);
+  byId("live-scoreboard").hidden = !visible;
+  if (!visible) {
+    scoreboardKey = "";
+    selectedMemberId = null;
+    byId("member-questions-dialog").close();
+    return;
+  }
+  const history = state.history || [];
+  byId("scoreboard-completed").textContent = `${history.length} / ${state.question_count} complete`;
+  const key = JSON.stringify([state.code, history, state.answer_options]);
+  if (key === scoreboardKey) return;
+  scoreboardKey = key;
+  const summary = reportTools.topVoteSummary(history, state.answer_options);
+  const highest = Math.max(1, ...summary.map((member) => member.questions.length));
+  byId("member-scoreboard").innerHTML = summary.map((member) => `<li><button class="chart-row scoreboard-row" type="button" data-member="${escapeHtml(member.id)}" data-focus-key="score-${escapeHtml(member.id)}" aria-haspopup="dialog" aria-controls="member-questions-dialog" title="Top-voted questions for ${escapeHtml(member.name)}" aria-label="${escapeHtml(member.name)}: ${member.questions.length} questions with max votes"><span class="chart-name">${escapeHtml(member.name)}</span><span class="chart-track" aria-hidden="true"><span class="chart-bar" style="width:${member.questions.length / highest * 100}%"></span></span><span class="chart-value">${member.questions.length}</span></button></li>`).join("");
+  renderMemberQuestions();
+}
+
+async function exportRound() {
+  if (exporting || !isOwner() || state.phase !== "finished") return;
+  const completedState = state;
+  exporting = true;
+  document.querySelector('[data-command="export"]')?.setAttribute("disabled", "");
+  try {
+    const tools = await reportToolsReady;
+    if (!tools) throw new Error("The export could not load. Refresh the page and try again.");
+    const workbook = tools.excelWorkbookXml(completedState);
+    const url = URL.createObjectURL(new Blob([workbook], { type: "application/vnd.ms-excel;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `room-vote-${completedState.code}-${new Date().toISOString().replace(/[:.]/g, "-")}.xml`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    toast("Excel XML workbook exported.");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    exporting = false;
+    document.querySelector('[data-command="export"]')?.removeAttribute("disabled");
+  }
+}
+
 function renderGuests() {
-  const guests = state.players.filter((player) => player.role === "guest");
+  const guests = state.players.filter((player) => player.role === "member");
   byId("guest-meta").textContent = state.phase === "lobby" ? `${guests.length} / 2 assigned` : "1 point per match";
   byId("guest-grid").innerHTML = Array.from({ length: 2 }, (unused, index) => {
     const guest = guests[index];
-    if (!guest) return `<div class="guest-card empty-guest"><span class="avatar avatar-empty">${icon("user-round")}</span><div><strong>Guest 0${index + 1}</strong><span>Not assigned</span></div>${icon("plus")}</div>`;
+    if (!guest) return `<div class="guest-card empty-guest"><span class="avatar avatar-empty">${icon("user-round")}</span><div><strong>Member 0${index + 1}</strong><span>Not assigned</span></div>${icon("plus")}</div>`;
     const result = state.result?.guest_votes.find((vote) => vote.id === guest.id);
     let caption = state.phase === "lobby" ? "Ready for round one" : guest.has_voted ? "Vote submitted" : "No vote yet";
     if (state.phase === "finished") caption = "Final score";
@@ -311,20 +387,20 @@ function renderGuests() {
 }
 
 function renderPlayers() {
-  const guests = state.players.filter((player) => player.role === "guest");
+  const guests = state.players.filter((player) => player.role === "member");
   byId("player-count").textContent = String(state.players.length);
   byId("roster-status").textContent = state.phase === "lobby" ? "LOBBY" : `${state.vote_count} VOTED`;
   byId("player-list").innerHTML = state.players.map((player) => {
     const owner = player.id === state.owner_id;
     const canAssign = isOwner() && state.phase === "lobby" && !owner;
-    const status = !player.connected ? "Reconnecting" : owner ? "Room owner" : player.role === "guest" ? "Guest" : "Member";
+    const status = !player.connected ? "Reconnecting" : owner ? "Room owner" : player.role === "member" ? "Member" : "Player";
     return `<li class="player-row">${avatar(player)}<div class="player-info"><span class="player-name">${escapeHtml(player.name)}${player.id === state.self_id ? " <span class='muted'>(you)</span>" : ""}</span><span class="player-sub ${player.connected ? "" : "offline"}">${status}</span></div>
-      ${canAssign ? `<div class="role-tools"><label class="guest-toggle" title="Assign ${escapeHtml(player.name)} as a guest"><input type="checkbox" data-guest="${player.id}" data-focus-key="guest-${player.id}" aria-label="Make ${escapeHtml(player.name)} a guest" ${player.role === "guest" ? "checked" : ""} ${online && (guests.length < 2 || player.role === "guest") ? "" : "disabled"}>Guest</label><button class="icon-button small" type="button" data-remove="${player.id}" title="Remove ${escapeHtml(player.name)}" aria-label="Remove ${escapeHtml(player.name)}" ${online ? "" : "disabled"}>${icon("x")}</button></div>`
-        : state.phase === "question" && player.has_voted ? `<span title="Vote submitted">${icon("circle-check", "voted-icon")}</span>` : `<span class="player-badge ${player.role === "guest" ? "guest" : ""}">${owner ? "OWNER" : player.role.toUpperCase()}</span>`}</li>`;
+      ${canAssign ? `<div class="role-tools"><label class="guest-toggle" title="Assign ${escapeHtml(player.name)} as a member"><input type="checkbox" data-guest="${player.id}" data-focus-key="guest-${player.id}" aria-label="Make ${escapeHtml(player.name)} a member" ${player.role === "member" ? "checked" : ""} ${online && (guests.length < 2 || player.role === "member") ? "" : "disabled"}>Member</label><button class="icon-button small" type="button" data-remove="${player.id}" title="Remove ${escapeHtml(player.name)}" aria-label="Remove ${escapeHtml(player.name)}" ${online ? "" : "disabled"}>${icon("x")}</button></div>`
+        : state.phase === "question" && player.has_voted ? `<span title="Vote submitted">${icon("circle-check", "voted-icon")}</span>` : `<span class="player-badge ${player.role === "member" ? "guest" : ""}">${owner ? "OWNER" : player.role.toUpperCase()}</span>`}</li>`;
   }).join("");
   byId("question-count").textContent = String(state.question_count);
   byId("timer-setting").textContent = `${state.round_seconds} sec`;
-  byId("self-label").textContent = `${selfPlayer().name} / ${isOwner() ? "Owner" : selfPlayer().role === "guest" ? "Guest" : "Member"}`;
+  byId("self-label").textContent = `${selfPlayer().name} / ${isOwner() ? "Owner" : selfPlayer().role === "member" ? "Member" : "Player"}`;
 }
 
 function renderAudit() {
@@ -335,7 +411,7 @@ function renderAudit() {
   if (selection === "current" || Number(selection) < state.audit_history.length) byId("audit-round").value = selection;
   const selected = byId("audit-round").value;
   const rows = selected === "current" ? state.audit : state.audit_history[Number(selected)].votes;
-  byId("audit-rows").innerHTML = rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.role === "guest" ? "Guest" : "Member"}</td><td>${escapeHtml(row.candidate_name || "Not voted")}</td></tr>`).join("");
+  byId("audit-rows").innerHTML = rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.role === "member" ? "Member" : "Player"}</td><td>${escapeHtml(row.candidate_name || "Not voted")}</td></tr>`).join("");
 }
 
 function render() {
@@ -359,6 +435,7 @@ function render() {
   }
   renderGuests();
   renderPlayers();
+  renderScoreboard();
   renderAudit();
   refreshIcons();
   updateTimer();
@@ -375,7 +452,10 @@ function updateTimer() {
   if (!state || state.phase !== "question") return;
   const remaining = Math.max(0, deadline - performance.now());
   const seconds = Math.ceil(remaining / 1000);
-  if (byId("timer-number")) byId("timer-number").textContent = String(seconds).padStart(2, "0");
+  if (byId("timer-number")) {
+    byId("timer-number").textContent = String(seconds).padStart(2, "0");
+    byId("timer-number").classList.toggle("long-timer", String(seconds).length > 5);
+  }
   byId("timer")?.classList.toggle("urgent", seconds <= 3);
   byId("timer-progress")?.style.setProperty("--progress", String(Math.min(1, remaining / (state.round_seconds * 1000))));
   document.querySelectorAll('input[name="vote"]').forEach((input) => { input.disabled = remaining <= 0 || !online; });
@@ -421,7 +501,7 @@ document.addEventListener("change", async (event) => {
   if (target.matches('input[name="vote"]')) {
     await sendAction("vote", { candidate_id: target.value, question_index: state.question_index });
   } else if (target.dataset.guest) {
-    const guestIds = state.players.filter((player) => player.role === "guest").map((player) => player.id);
+    const guestIds = state.players.filter((player) => player.role === "member").map((player) => player.id);
     const changed = target.checked ? [...guestIds, target.dataset.guest] : guestIds.filter((identifier) => identifier !== target.dataset.guest);
     await sendAction("guests", { guest_ids: changed });
   } else if (target.id === "audit-round") renderAudit();
@@ -431,6 +511,11 @@ document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
   if (button.dataset.close) byId(button.dataset.close).close();
+  if (button.dataset.member) {
+    selectedMemberId = button.dataset.member;
+    renderMemberQuestions();
+    byId("member-questions-dialog").showModal();
+  }
   if (button.dataset.remove) {
     const player = state.players.find((candidate) => candidate.id === button.dataset.remove);
     if (confirm(`Remove ${player.name} from the room?`)) await sendAction("remove", { player_id: player.id });
@@ -439,10 +524,13 @@ document.addEventListener("click", async (event) => {
   if (command === "settings") {
     byId("round-seconds").value = String(state.round_seconds);
     byId("questions-input").value = state.questions.join("\n");
+    byId("answer-names-input").value = (state.answer_options || []).map((option) => option.name).join("\n");
     formError("settings-error");
     byId("settings-dialog").showModal();
   } else if (command === "reset") {
     if (confirm("Return to the lobby and clear scores and ballot history?")) await sendAction("reset");
+  } else if (command === "export") {
+    await exportRound();
   } else if (command === "start" || command === "advance") await sendAction(command);
 });
 
@@ -452,7 +540,8 @@ byId("settings-form").addEventListener("submit", async (event) => {
   byId("save-settings").disabled = true;
   try {
     const questions = byId("questions-input").value.split(/\r?\n/).map((question) => question.trim()).filter(Boolean);
-    const saved = await sendAction("configure", { questions, round_seconds: Number(byId("round-seconds").value) }, true);
+    const answerNames = byId("answer-names-input").value.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+    const saved = await sendAction("configure", { questions, answer_names: answerNames, round_seconds: Number(byId("round-seconds").value) }, true);
     if (saved) byId("settings-dialog").close();
   } catch (error) { formError("settings-error", error.message); }
   finally { byId("save-settings").disabled = false; }
